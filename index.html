@@ -91,7 +91,8 @@ select,input[type=number]{padding:6px 8px;border-radius:8px;border:1px solid var
 .stage.cropping .tbar,.stage.cropping .panes{display:none}
 .stage.cropping .cropstage{display:flex}
 .croparea{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:14px;background:var(--pane);border-radius:8px;overflow:hidden}
-.cropwrap{position:relative;touch-action:none;user-select:none;-webkit-user-select:none}
+.cropwrap{position:relative;margin:auto;flex:0 0 auto;touch-action:none;user-select:none;-webkit-user-select:none}
+#cropArea{overflow:auto;align-items:flex-start;justify-content:flex-start;touch-action:none;cursor:grab}
 .cropclip{position:absolute;inset:0;overflow:hidden}
 .cropclip canvas{width:100%;height:100%;display:block}
 #cropDim{position:absolute;box-shadow:0 0 0 9999px rgba(0,0,0,.55);pointer-events:none}
@@ -258,6 +259,7 @@ select,input[type=number]{padding:6px 8px;border-radius:8px;border:1px solid var
       <div class="cropstage" id="cropStage">
         <div class="croptbar">
           <b>Crop</b>
+          <button id="cZoomOut" class="sq" title="Perkecil">−</button><span id="cZoomLbl" style="min-width:44px;text-align:center;font-weight:600">100%</span><button id="cZoomIn" class="sq" title="Perbesar">+</button><button id="cZoomFit">Pas</button>
           <select id="cropRatio" style="width:auto">
             <option value="free">Bebas</option>
             <option value="a4">A4 (210×297)</option>
@@ -283,7 +285,7 @@ select,input[type=number]{padding:6px 8px;border-radius:8px;border:1px solid var
             </div>
           </div>
         </div>
-        <div class="note">Seret kotak untuk memindah, seret titik putih untuk mengubah ukuran. Pilih rasio untuk mengunci bentuk.</div>
+        <div class="note">Seret kotak untuk memindah, seret titik putih untuk mengubah ukuran. Roda mouse atau tombol +/− untuk zoom, seret latar untuk menggeser. Pilih rasio untuk mengunci bentuk.</div>
       </div>
     </section>
   </div>
@@ -1164,7 +1166,7 @@ $('#chkFinal').addEventListener('change', () => { final.valid = false; scheduleF
 /* =====================================================================
    Crop (per gambar)
    ===================================================================== */
-const crop = {active:false, draft:null, dispW:0, dispH:0, land:false, drag:null};
+const crop = {active:false, draft:null, dispW:0, dispH:0, fw:0, fh:0, z:1, land:false, drag:null};
 function ratioForPreset(){
   const p = $('#cropRatio').value;
   if(p === 'free') return null;
@@ -1192,24 +1194,37 @@ function applyRatioToDraft(){
   setDraftPx({x:clamp(cx-w/2,0,dW-w), y:clamp(cy-h/2,0,dH-h), w, h});
   updateBox();
 }
+function applyCropZoom(){
+  const W = Math.round(crop.fw*crop.z), H = Math.round(crop.fh*crop.z), wrap = $('#cropWrap');
+  crop.dispW = W; crop.dispH = H;
+  wrap.style.width = W+'px'; wrap.style.height = H+'px';
+  const cv = $('#cvCrop'), k = Math.min(dpr(), 4096/Math.max(W,H));
+  cv.width = Math.max(1, Math.round(W*k)); cv.height = Math.max(1, Math.round(H*k));
+  const x = cv.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(cvPrev, 0, 0, cv.width, cv.height);
+  $('#cZoomLbl').textContent = Math.round(crop.z*100) + '%';
+  updateBox();
+}
 function layoutCrop(){
   if(!crop.active) return;
   const area = $('#cropArea');
-  const aw = area.clientWidth - 28, ah = area.clientHeight - 28;
-  const s = Math.min(aw/cvPrev.width, ah/cvPrev.height);
-  crop.dispW = Math.max(40, Math.floor(cvPrev.width*s));
-  crop.dispH = Math.max(40, Math.floor(cvPrev.height*s));
-  const wrap = $('#cropWrap'); wrap.style.width = crop.dispW+'px'; wrap.style.height = crop.dispH+'px';
-  const cv = $('#cvCrop'), d = dpr();
-  cv.width = Math.round(crop.dispW*d); cv.height = Math.round(crop.dispH*d);
-  const x = cv.getContext('2d'); x.imageSmoothingQuality = 'high';
-  x.drawImage(cvPrev, 0, 0, cv.width, cv.height);
-  updateBox();
+  const s = Math.min((area.clientWidth-28)/cvPrev.width, (area.clientHeight-28)/cvPrev.height);
+  crop.fw = Math.max(40, Math.floor(cvPrev.width*s)); crop.fh = Math.max(40, Math.floor(cvPrev.height*s));
+  applyCropZoom();
+}
+/* zoom editor crop: titik (cx,cy) di layar tetap di tempatnya */
+function cropZoom(f, cx, cy){
+  const area = $('#cropArea'), ar = area.getBoundingClientRect();
+  const px = cx === undefined ? ar.left + ar.width/2 : cx, py = cy === undefined ? ar.top + ar.height/2 : cy;
+  const wr = $('#cropWrap').getBoundingClientRect(), fx = (px-wr.left)/wr.width, fy = (py-wr.top)/wr.height;
+  const nz = clamp(crop.z*f, 1, 8); if(nz === crop.z) return;
+  crop.z = nz; applyCropZoom();
+  const w2 = $('#cropWrap').getBoundingClientRect();
+  area.scrollLeft += (w2.left + fx*w2.width) - px; area.scrollTop += (w2.top + fy*w2.height) - py;
 }
 function enterCrop(){
   const it = curItem(); if(!it || !state.img || !state.ready || busy) return;
-  renderGeom(state.img, it.rot, it.quad, cvPrev, 1600, null, false);
-  crop.active = true;
+  renderGeom(state.img, it.rot, it.quad, cvPrev, 3000, null, false);
+  crop.z = 1; crop.active = true;
   crop.land = cvPrev.width > cvPrev.height;
   $('#cropOri').textContent = crop.land ? 'Mendatar' : 'Tegak';
   crop.draft = it.crop ? Object.assign({}, it.crop) : {x:.04, y:.04, w:.92, h:.92};
@@ -1222,6 +1237,24 @@ function exitCrop(){
   scheduleDraw();
 }
 $('#btnCrop').addEventListener('click', enterCrop);
+$('#cZoomIn').addEventListener('click', () => cropZoom(1.4));
+$('#cZoomOut').addEventListener('click', () => cropZoom(1/1.4));
+$('#cZoomFit').addEventListener('click', () => { crop.z = 1; applyCropZoom(); const ar = $('#cropArea'); ar.scrollLeft = 0; ar.scrollTop = 0; });
+(function(){
+  const area = $('#cropArea'); let pan = null;
+  area.addEventListener('pointerdown', e => {
+    if(!crop.active || e.target.closest('[data-h]')) return;
+    pan = {x:e.clientX, y:e.clientY, sl:area.scrollLeft, st:area.scrollTop};
+    try{ area.setPointerCapture(e.pointerId); }catch(_){}
+  });
+  area.addEventListener('pointermove', e => { if(pan){ area.scrollLeft = pan.sl - (e.clientX-pan.x); area.scrollTop = pan.st - (e.clientY-pan.y); } });
+  const pend = () => { pan = null; };
+  area.addEventListener('pointerup', pend); area.addEventListener('pointercancel', pend);
+  area.addEventListener('wheel', e => {
+    if(!crop.active) return; e.preventDefault();
+    cropZoom(Math.exp(-e.deltaY*(e.deltaMode === 1 ? 0.05 : 0.0015)), e.clientX, e.clientY);
+  }, {passive:false});
+})();
 $('#cropCancel').addEventListener('click', exitCrop);
 $('#cropReset').addEventListener('click', () => { crop.draft = {x:.02, y:.02, w:.96, h:.96}; applyRatioToDraft(); });
 $('#cropApply').addEventListener('click', () => {
